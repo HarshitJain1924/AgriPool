@@ -1,0 +1,8 @@
+Django>=4.2
+djangorestframework
+django-cors-headers
+python-decouple
+psycopg2-binary
+djangorestframework-simplejwt
+PyMySQL>=1.1.0
+cryptography>=42.0.0

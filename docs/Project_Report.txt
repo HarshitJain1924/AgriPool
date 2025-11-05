@@ -1,0 +1,260 @@
+AgriPool — Project Report Notes (Text)
+=====================================
+
+Use this document as a comprehensive source to create your detailed report and presentation. It summarizes motivation, features, architecture, data models, API, UI, flows, validation rules, testing, and future work. Adjust tone/formatting as needed.
+
+1. Abstract / Executive Summary
+-------------------------------
+AgriPool is a logistics collaboration platform that enables farmers to pool transport capacity to reduce costs and coordinate deliveries efficiently. The solution provides:
+- A Django REST API with JWT authentication and MySQL storage
+- A React frontend with Tailwind styling and a modern UX (responsive navbar, global toasts, sticky footer)
+- Core flows: creating pool offers, browsing and joining approved pools, managing capacities, completing deliveries
+- Admin tools: offer approvals, join request moderation, dashboard analytics, filters and bulk actions
+- Extras: notification center for real-time updates and a built-in Fertilizer Advisor to offer simple, rules-based nutrient guidance
+
+2. Objectives & Problem Statement
+---------------------------------
+- Problem: Individual smallholder farmers often cannot fully utilize truck capacity, leading to higher per-unit transport costs and fragmented logistics.
+- Objective: Build a platform to aggregate loads, optimize vehicle utilization, and streamline approvals/coordination through an accessible web app.
+- KPIs: Higher capacity utilization, reduced per-kilometer costs (estimated), faster admin turnaround (approval flow), farmer adoption/retention.
+
+3. Stakeholders & Roles
+-----------------------
+- Farmers (authenticated):
+  - Create pool offers (as providers), specify route/date/capacity and baseline load
+  - Browse approved pools and request to join with produce type and quantity
+  - Track "My Pools" and "My Join Requests" and manage Profile
+  - Use the Fertilizer Advisor for quick N/P/K guidance
+- Admin:
+  - Review/approve/reject pool offers
+  - Approve/reject join requests
+  - Monitor Admin Dashboard (summary cards + recently completed pools)
+  - Use filters, search, and bulk actions (e.g., bulk approve)
+
+4. System Architecture Overview
+-------------------------------
+- Frontend: React (CRA), Tailwind CSS, react-router-dom v6, axios
+- Backend: Django 4.x, Django REST Framework, SimpleJWT, python-decouple, django-cors-headers
+- DB: MySQL (via PyMySQL client)
+- Auth: JWT (access/refresh), frontend auto-refreshes tokens on 401 once
+- Notifications: stored server-side and polled client-side (navbar badge + menu)
+
+5. Platform Features (Summary)
+------------------------------
+- Pool Offers lifecycle: create → admin approval → joiners → capacity decrement → completion
+- Available Pools marketplace with filters (origin/destination/date), join flow with status
+- My Pools for providers (view joiners, complete pool, delete offer)
+- My Join Requests for requesters (status tracking)
+- Admin Dashboard: totals, pending counts, completed pools, recent completions
+- Admin Pool Offers: status filter, search, date filter, completed-only switch, badges, bulk approve
+- Admin Join Requests: list and quick actions (approve/reject)
+- Notifications center: unread count, list, mark-all-read
+- Fertilizer Advisor: rule-based nutrient guidance (N/P/K) with crop/soil/area input
+
+6. Data Model (Key Entities)
+----------------------------
+- User (Django auth): username, password (hashed), is_staff (admin)
+- Farmer: user (FK), phone, location
+- Vehicle: owner (FK to User), vehicle_type, capacity, route, available
+- TransportPool (pool offer):
+  - provider (FK to Farmer)
+  - vehicle (nullable FK) or vehicle_type (when not assigned yet)
+  - origin, destination, date, distance_km
+  - total_capacity, available_capacity, provider_load
+  - price_per_km, status (PENDING/APPROVED/REJECTED/FULL)
+  - completion flags/fields (e.g., completed_at / is_completed when applicable)
+- PoolJoinRequest:
+  - pool (FK), requester (FK to Farmer)
+  - produce_type, quantity
+  - status (PENDING/APPROVED/REJECTED)
+- Notification:
+  - user (FK), message, is_read, created_at
+- FarmerProfile:
+  - user (FK), location, contact, farm_size, preferred_crops (list)
+
+Validation & Business Rules:
+- provider_load <= total_capacity
+- If vehicle is set: total_capacity <= vehicle.capacity
+- On approving join: must have sufficient available_capacity; decrement on approval
+- Pools can be marked FULL when available_capacity reaches 0
+- Pools can be marked completed (immutable after completion by design)
+
+7. API Design (Selected Endpoints)
+----------------------------------
+Base URL: http://127.0.0.1:8000/api/
+
+Auth & Users
+- POST token/ → { access, refresh }
+- POST token/refresh/ → { access }
+- POST signup/ → create user + farmer record
+- GET  current-user/ → { username, is_admin, is_farmer, ... }
+
+Vehicles
+- GET/POST vehicles/
+- GET/PUT/DELETE vehicles/{id}/
+
+Pools & Joins
+- GET/POST pool-offers/ → create by provider; list returns approved for marketplace when not mine
+- GET/PUT/DELETE pool-offers/{id}/ → owner/admin
+- POST pool-offers/{id}/join/ → { produce_type, quantity }
+- GET  pool-offers/{id}/joiners/
+- POST pool-offers/{id}/complete/
+- GET  my/join-requests/
+
+Admin
+- GET  admin/summary/
+- GET  admin/pool-offers/
+- POST admin/pool-offers/{id}/approve/ → approve
+- GET  admin/join-requests/
+- POST admin/join-requests/{id}/approve/
+- POST admin/join-requests/{id}/reject/
+
+Profiles, Recs, Notifications, Advisor
+- GET/PUT farmer/profile/
+- GET     pools/recommended/
+- GET     notifications/; POST notifications/mark-read/
+- POST    fertilizer/advice/ → { crop, soil, area }
+
+Example: Fertilizer Advisor Request
+{
+  "crop": "Wheat",
+  "soil": "Loam",
+  "area": 2.5
+}
+Response
+{
+  "crop": "Wheat",
+  "soil": "Loam",
+  "area": 2.5,
+  "n": 100,
+  "p": 60,
+  "k": 40,
+  "advice": "Apply N in 2-3 split doses; incorporate P&K at land prep"
+}
+
+8. Frontend UX & Routes
+-----------------------
+- / (Home)
+- /login, /signup
+- /dashboard (farmer summary + charts)
+- /pools (Available Pools; filters for origin/destination/date; join flow)
+- /my-pools (manage offers; view joiners; complete offer; delete)
+- /my-join-requests
+- /create-pool-offer
+- /profile
+- /fertilizer-advisor
+- /admin (Dashboard), /admin/pool-offers, /admin/join-requests
+
+Route Guards
+- ProtectedRoute: requires JWT token
+- AdminRoute: requires user.is_admin
+
+UI Components
+- Navbar with notification dropdown & unread badge
+- Global Toaster (react-hot-toast)
+- Sticky Footer, consistent spacing & container widths
+
+9. Core Flows
+-------------
+A) Create Pool Offer (Provider)
+1. Provider logs in → navigates to Create Pool Offer
+2. Fills route, date, distance, vehicle or vehicle type, total capacity, own load
+3. Submits → status PENDING until admin review; visible to provider under My Pools
+
+B) Admin Approves Pool Offer
+1. Admin opens Admin Pool Offers
+2. Filters/searches; selects offer(s)
+3. Approves → offer becomes APPROVED and appears in marketplace (Available Pools)
+
+C) Request Join & Approval
+1. Farmer opens Available Pools, filters, selects pool → submits join request (produce, quantity)
+2. Join request is PENDING
+3. Admin approves the join → available_capacity decremented accordingly; status updated
+
+D) Complete Pool
+1. Provider marks pool completed when delivery is done
+2. Pool becomes read-only, shows completed badge; appears in admin dashboard recent list
+
+E) Notifications
+- Key actions (approval, join updates, etc.) generate Notification rows
+- Navbar polls for notifications; unread count shows; “mark all read” available
+
+10. Fertilizer Advisor (Rules)
+------------------------------
+- Inputs: crop, soil, area (ha)
+- Rules: simple crop/soil matrices to suggest per-hectare N/P/K; multiply by area
+- Guidance: split N into 2–3 doses; apply P&K at or before planting; adjust based on soil fertility
+- Purpose: quick advisory scaffold for demonstrations; can be replaced with agronomic APIs later
+
+11. Setup & Runbook (Windows cmd)
+---------------------------------
+Backend
+- cd backend
+- python -m venv venv
+- venv\Scripts\activate
+- pip install -r requirements.txt
+- Configure backend/.env (DB, SECRET_KEY, DEBUG, ALLOWED_HOSTS)
+- python manage.py migrate
+- python manage.py createsuperuser
+- python manage.py runserver
+
+Frontend
+- cd frontend
+- npm install
+- npm start
+
+12. Testing & Quality
+---------------------
+- Backend tests: run `python manage.py test`
+- Included tests:
+  - Serializer validation (capacity vs provider load)
+  - Pool join/approve decrements capacity; rejects excessive join
+  - Capacity persistence and recompute behavior
+- Lint/Type: (JS/TS linters optional; Tailwind configured)
+
+13. Security & Compliance
+-------------------------
+- JWT auth (do not log tokens; store minimally)
+- CORS restricted in production; set ALLOWED_HOSTS
+- Use strong SECRET_KEY and secure DB credentials in environment variables
+- Validate inputs server-side (quantities, capacities, ownership checks)
+
+14. Performance & Scalability Notes
+-----------------------------------
+- Use DB indexes on pool status, date, origin/destination for faster queries
+- Paginate admin and marketplace lists (client-side filters shown; server-side pagination recommended)
+- Async notifications and email/SMS can be added later via Celery
+
+15. Risks & Mitigations
+-----------------------
+- Data consistency on approvals: wrapped in transactions; validations prevent negative capacity
+- Overbooking risk: approve logic rechecks available capacity at decision time
+- Security: JWT rotation and refresh; avoid XSS by sanitizing messages shown in notifications
+
+16. Future Work
+---------------
+- Payments and invoicing per pool
+- Real-time updates via WebSockets
+- Route optimization and cost estimates with mapping APIs
+- Advanced Fertilizer Advisor with agronomic datasets and local pricing
+- CSV export and additional admin analytics (revenue, utilization trends)
+
+17. Appendix: Environment & Dependencies
+---------------------------------------
+Backend (requirements.txt major packages)
+- Django>=4.2
+- djangorestframework
+- djangorestframework-simplejwt
+- django-cors-headers
+- python-decouple
+- PyMySQL>=1.1.0
+- cryptography>=42.0.0
+
+Frontend (package.json key deps)
+- react 18, react-dom 18
+- react-router-dom 6
+- axios 1.4
+- tailwindcss 3.4 (with autoprefixer, postcss)
+- recharts 3.3
+
+End of document.
